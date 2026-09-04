@@ -44,6 +44,16 @@ function relTime(iso) {
 
 function uid() { return "id" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
+/* 题目 id 比较：云端是数字(bigint)，本地是字符串，DOM dataset 读回一律是字符串
+   —— 统一转字符串比较，避免 1 === "1" 失败导致的路由/编辑/删除失灵 */
+function qidEq(a, b) { return String(a) === String(b); }
+
+/* 从 dataset/hash 等字符串来源还原出 S.questions 里的原始题目对象 */
+function questionByStrId(strId) {
+  if (strId === null || strId === undefined || strId === "") return null;
+  return S.questions.find((x) => qidEq(x.id, strId)) || null;
+}
+
 /* 头像：取名字首字母（大写） */
 function initialOf(name) {
   const s = String(name || "").trim();
@@ -467,7 +477,8 @@ function rerenderPreservingDraft() {
 function currentAnswerQid() {
   const queue = myQueue();
   if (S.view.arg) {
-    if (S.questions.some((q) => q.id === S.view.arg)) return S.view.arg;
+    const q = questionByStrId(S.view.arg);
+    if (q) return q.id;
   }
   return queue.length ? queue[0].id : null;
 }
@@ -692,7 +703,7 @@ function renderAnswer() {
   let q = null;
 
   if (S.view.arg) {
-    q = S.questions.find((x) => x.id === S.view.arg) || null;
+    q = questionByStrId(S.view.arg);
   }
   if (!q && queue.length) {
     q = queue[0];
@@ -756,6 +767,7 @@ async function saveAnswerAndNext() {
   const content = (t ? t.value : "").trim();
   if (!content) { toast("请填写答案后再保存", "err"); return; }
   const btn = document.querySelector('[data-action="ans-save"]');
+  const wasEdit = !!(answersOf(qid) && answersOf(qid).mine); // 保存前：是修改已有回答吗
   btn.disabled = true;
   btn.textContent = "保存中…";
   try {
@@ -763,20 +775,30 @@ async function saveAnswerAndNext() {
     delete S.drafts[qid]; saveDrafts();
     await safeRefresh(true);
     toast("已保存", "ok");
-    // 找下一题
-    const queue = myQueue();
-    const next = queue.find((x) => x.id !== qid);
-    if (next) {
-      location.hash = `#/answer/${next.id}`;
+    if (wasEdit) {
+      // 修改回答：返回「查看回复」并展开原问题，对照双方答案
+      // hash 带上题目 id，保证后续 hashchange/实时刷新触发的重渲染也能保持展开
+      S.filters.replies = "全部";
+      location.hash = "#/replies/" + qid;
+      route();
+      const item = document.querySelector(`.reply-item[data-qid="${CSS.escape(String(qid))}"]`);
+      if (item) { item.classList.add("open"); setTimeout(() => item.scrollIntoView({ behavior: "smooth", block: "center" }), 60); }
     } else {
-      location.hash = "#/answer";
+      // 新作答：继续下一题
+      const queue = myQueue();
+      const next = queue.find((x) => x.id !== qid);
+      if (next) {
+        location.hash = `#/answer/${next.id}`;
+      } else {
+        location.hash = "#/answer";
+      }
+      route();
     }
-    route();
   } catch (e) {
     console.error(e);
     toast("保存失败：" + (e.message || "网络异常"), "err");
     btn.disabled = false;
-    btn.textContent = "保存并继续";
+    btn.textContent = wasEdit ? "保存修改" : "保存并继续";
   }
 }
 
@@ -822,7 +844,7 @@ function renderReplies() {
   };
 
   const listHTML = list.length ? list.map(({ q, mine, theirs, both }) => {
-    const openCls = (S.view.arg === q.id) ? "open" : "";
+    const openCls = (S.view.arg && qidEq(S.view.arg, q.id)) ? "open" : "";
     return `
     <div class="reply-item ${openCls}" data-qid="${esc(q.id)}">
       <div class="q-line" data-action="reply-toggle" data-qid="${esc(q.id)}">
@@ -958,11 +980,14 @@ function openDeleteQuestionSheet(q) {
     </div>`;
 }
 
-async function saveQuestionSheet(qid) {
+async function saveQuestionSheet(qidStr) {
   const content = ($("#q-content") || {}).value || "";
   const statusEl = $("#q-status");
   const btn = document.querySelector('[data-action="q-save"]');
   if (!content.trim()) { toast("问题不能为空", "err"); return; }
+  // dataset 读回的是字符串，还原成数据里的原始 id（云端为数字）
+  const q = qidStr ? questionByStrId(qidStr) : null;
+  const qid = q ? q.id : (qidStr || null);
   btn.disabled = true;
   try {
     if (qid) {
@@ -1017,17 +1042,20 @@ document.addEventListener("click", (e) => {
     case "q-save": saveQuestionSheet(el.dataset.qid || null); break;
 
     case "q-edit": {
-      const q = S.questions.find((x) => x.id === el.dataset.qid);
+      const q = questionByStrId(el.dataset.qid);
       if (q) openEditQuestionSheet(q);
+      else toast("该问题不存在或已被删除", "err");
       break;
     }
     case "q-delete": {
-      const q = S.questions.find((x) => x.id === el.dataset.qid);
+      const q = questionByStrId(el.dataset.qid);
       if (q) openDeleteQuestionSheet(q);
+      else toast("该问题不存在或已被删除", "err");
       break;
     }
     case "q-delete-confirm": {
-      const qid = el.dataset.qid;
+      const q = questionByStrId(el.dataset.qid);
+      const qid = q ? q.id : el.dataset.qid;
       closeModal();
       S.adapter.deleteQuestion(qid).then(async () => {
         toast("已删除");
@@ -1041,11 +1069,13 @@ document.addEventListener("click", (e) => {
     case "reply-filter": S.filters.replies = el.dataset.filter; route(); break;
 
     case "reply-jump": {
+      const q = questionByStrId(el.dataset.qid);
+      if (!q) { toast("该问题不存在或已被删除", "err"); return; }
       S.filters.replies = "全部";
-      location.hash = "#/replies";
-      S.view = { page: "replies", arg: el.dataset.qid };
+      // hash 带上题目 id：路由解析后自动展开并定位，重渲染也能保持
+      location.hash = "#/replies/" + q.id;
       route();
-      const item = document.querySelector(`.reply-item[data-qid="${CSS.escape(el.dataset.qid)}"]`);
+      const item = document.querySelector(`.reply-item[data-qid="${CSS.escape(String(q.id))}"]`);
       if (item) { item.classList.add("open"); setTimeout(() => item.scrollIntoView({ behavior: "smooth", block: "center" }), 60); }
       break;
     }
@@ -1055,9 +1085,12 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "ans-edit": {
-      const qid = el.dataset.qid;
-      location.hash = "#/answer/" + qid;
-      S.view = { page: "answer", arg: qid };
+      const q = questionByStrId(el.dataset.qid);
+      if (!q) { toast("该问题不存在或已被删除", "err"); return; }
+      // 编辑已有回答：清掉旧草稿，进入后直接显示已提交内容
+      if (answersOf(q.id).mine) { delete S.drafts[q.id]; saveDrafts(); }
+      location.hash = "#/answer/" + q.id;
+      S.view = { page: "answer", arg: q.id };
       route();
       break;
     }
