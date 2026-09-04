@@ -26,7 +26,7 @@ window.APP_CONFIG = {
   //          在 Supabase 创建用户时建议设成一样的）
   accounts: [
     { email: "chenhongyi0910@163.com", name: "Alex",   password: "080910" },
-    { email: "baobei0910@163.com",     name: "Angela", password: "150298" }
+    { email: "angelawzf73@gmail.com",   name: "Angela", password: "150298" }
   ],
 
   // ---- 站点文案 ----
