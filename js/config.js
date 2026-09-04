@@ -16,8 +16,8 @@ window.APP_CONFIG = {
   // 格式示例：
   //   supabaseUrl: "https://abcdefghijk.supabase.co",
   //   supabaseAnonKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6...",
-  supabaseUrl: "",
-  supabaseAnonKey: "",
+  supabaseUrl: "https://idvwqaicfijgwxcjampg.supabase.co",
+  supabaseAnonKey: "sb_publishable_i3xpOP3sHSzXtwO2tOgQvw_AZBkZ9wI",
 
   // ---- 两个预设账号 ----
   // email 需与 Supabase 中创建的两个用户邮箱一致

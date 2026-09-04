@@ -216,12 +216,17 @@ class SupabaseAdapter {
   async _bootstrapProfile(user) {
     let { data: profiles } = await this.sb.from("profiles").select("*").eq("id", user.id);
     let p = profiles && profiles[0];
+    const acc = this._accOf(user.email);
+    const emailPrefix = (user.email || "").split("@")[0];
     if (!p) {
-      const acc = this._accOf(user.email);
       p = {
         id: user.id, email: user.email,
-        display_name: acc ? acc.name : (user.email || "").split("@")[0],
+        display_name: acc ? acc.name : emailPrefix,
       };
+      await this.sb.from("profiles").upsert(p);
+    } else if (acc && p.display_name === emailPrefix && acc.name !== emailPrefix) {
+      // 名字还是注册时的默认值（邮箱前缀）→ 纠正为配置里的名字
+      p = { ...p, display_name: acc.name };
       await this.sb.from("profiles").upsert(p);
     }
     return { id: user.id, email: p.email || user.email, display_name: p.display_name };
