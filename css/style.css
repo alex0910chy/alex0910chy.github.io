@@ -351,18 +351,33 @@ body {
 .reply-item .q-line .arrow { color: var(--ink-3); font-size: 15px; flex: none; margin-top: 2px; transition: transform 0.2s; }
 .reply-item.open .q-line .arrow { transform: rotate(90deg); }
 
-.reply-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 13px; }
-.ans-mini {
-  border-radius: var(--radius-sm); padding: 13px; font-size: 13px; line-height: 1.75;
-  min-height: 62px; background: var(--field);
+/* 展开区：上下堆叠，对方的回答置顶放大（各视角对称） */
+.ans-card {
+  border-radius: var(--radius-sm); padding: 13px 14px;
+  background: var(--field); margin-top: 10px;
 }
-.ans-mini.me   { border-left: 2px solid var(--accent); }
-.ans-mini.ta   { border-left: 2px solid var(--gold); }
-.ans-mini.none { color: var(--ink-3); display: flex; align-items: center; justify-content: center; border-left: 2px solid var(--line); }
-.ans-mini .who { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; margin-bottom: 7px; color: var(--ink); }
-.ans-mini .who .avatar { width: 21px; height: 21px; font-size: 10px; }
-.ans-mini .who .t { color: var(--ink-3); font-weight: 400; font-size: 11px; margin-left: auto; letter-spacing: 0.3px; }
-.ans-mini .a { word-break: break-word; color: var(--ink-2); }
+.ans-card .who { display: flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 600; margin-bottom: 7px; color: var(--ink); }
+.ans-card .who .avatar { width: 22px; height: 22px; font-size: 10px; }
+.ans-card .who .t { color: var(--ink-3); font-weight: 400; font-size: 11px; margin-left: auto; letter-spacing: 0.3px; }
+.ans-card .a { word-break: break-word; }
+
+.ans-card.ta { border-left: 3px solid var(--gold); background: #FBF6EE; }
+.ans-card.ta .a { font-size: 15px; line-height: 1.85; color: var(--ink); }
+.ans-card.me { border-left: 3px solid var(--accent); }
+.ans-card.me .a { font-size: 13.5px; line-height: 1.75; color: var(--ink-2); }
+.ans-card.empty .a { color: var(--ink-3); font-size: 13px; }
+
+/* 回复列表里"新回复"标记 */
+.reply-item .new-tag {
+  flex: none; margin-top: 3px;
+  font-size: 10.5px; font-weight: 600; letter-spacing: 1px; text-indent: 1px;
+  color: #8A6D3B; background: var(--gold-soft);
+  border-radius: 4px; padding: 1px 5px;
+}
+
+/* 首页"新回复"横幅 */
+.quick-row.fresh { background: #FBF6EE; }
+.quick-row.fresh .t { color: #8A6D3B; }
 
 .reply-detail { display: none; }
 .reply-item.open .reply-detail { display: block; }
@@ -473,6 +488,7 @@ body {
 }
 .toast.ok { background: var(--accent); }
 .toast.err { background: var(--danger); }
+.toast.clickable { cursor: pointer; border: 1px solid rgba(255, 255, 255, 0.4); }
 
 /* ---------- 动画 ---------- */
 @keyframes riseIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }

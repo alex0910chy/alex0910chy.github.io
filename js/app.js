@@ -60,13 +60,15 @@ function initialOf(name) {
   return s ? s.charAt(0).toUpperCase() : "·";
 }
 
-function toast(msg, type = "") {
+function toast(msg, type = "", onClick = null) {
   const el = document.createElement("div");
-  el.className = `toast ${type}`;
+  el.className = `toast ${type}${onClick ? " clickable" : ""}`;
   el.textContent = msg;
+  if (onClick) el.addEventListener("click", () => { onClick(); el.remove(); });
   $("#toast-wrap").appendChild(el);
-  setTimeout(() => { el.style.transition = "opacity .3s"; el.style.opacity = "0"; }, 1800);
-  setTimeout(() => el.remove(), 2200);
+  const life = onClick ? 6000 : 1800;
+  setTimeout(() => { el.style.transition = "opacity .3s"; el.style.opacity = "0"; }, life);
+  setTimeout(() => el.remove(), life + 400);
 }
 
 /* ============================================================
@@ -325,13 +327,39 @@ const S = {
   profiles: [],
   drafts: {},          // qid -> 文本草稿（内存）
   view: { page: "home", arg: null },
-  filters: { questions: "全部", replies: "双方已答" },
+  filters: { questions: "全部", replies: "全部" },
   busy: false,
 };
 
 const DRAFT_KEY = "coupleqa_drafts";
 function loadDrafts() { try { S.drafts = JSON.parse(localStorage.getItem(DRAFT_KEY) || "{}"); } catch { S.drafts = {}; } }
 function saveDrafts() { localStorage.setItem(DRAFT_KEY, JSON.stringify(S.drafts)); }
+
+/* ---------------- 回复已读追踪（按用户隔离，各自记各自的"上次查看看点"） ---------------- */
+const SEEN_KEY = "coupleqa_seen";
+function repliesSeenAt() {
+  if (!S.me) return 0;
+  try {
+    const m = JSON.parse(localStorage.getItem(SEEN_KEY) || "{}");
+    return m[S.me.id] ? new Date(m[S.me.id]).getTime() : 0;
+  } catch { return 0; }
+}
+function markRepliesSeen() {
+  if (!S.me) return;
+  try {
+    const m = JSON.parse(localStorage.getItem(SEEN_KEY) || "{}");
+    m[S.me.id] = new Date().toISOString();
+    localStorage.setItem(SEEN_KEY, JSON.stringify(m));
+  } catch {}
+}
+/* 对方在我上次查看之后新提交的回答（新回复） */
+function partnerNewAnswers() {
+  if (!S.partner) return [];
+  const seen = repliesSeenAt();
+  return S.answers
+    .filter((a) => a.user_id === S.partner.id && new Date(a.answered_at).getTime() > seen)
+    .sort((a, b) => new Date(b.answered_at) - new Date(a.answered_at));
+}
 
 function otherAccountOf(me) {
   const cfg = window.APP_CONFIG;
@@ -418,7 +446,27 @@ async function boot() {
 
   S.adapter.subscribe(debounce(async () => {
     if (!S.me) return;
+    // 记住刷新前双方答案集合，刷新后找出"对方新提交"的回答
+    const aKey = (a) => a.question_id + "|" + a.answered_at;
+    const before = new Set(S.answers.map(aKey));
     await safeRefresh(true);
+    if (S.partner && S.view.page !== "replies") {
+      const cutoff = Date.now() - 5 * 60 * 1000;
+      const fresh = S.answers.filter((a) => a.user_id === S.partner.id &&
+        !before.has(aKey(a)) && new Date(a.answered_at).getTime() > cutoff);
+      if (fresh.length) {
+        const a = fresh[fresh.length - 1];
+        const q = S.questions.find((x) => qidEq(x.id, a.question_id));
+        const brief = q ? (q.content.length > 12 ? q.content.slice(0, 12) + "…" : q.content) : "新问题";
+        toast(`${(S.partner && S.partner.name) || "对方"} 刚刚回答了「${brief}」 · 点击查看`, "", () => {
+          S.filters.replies = "全部";
+          location.hash = "#/replies/" + a.question_id;
+          route();
+          const item = document.querySelector(`.reply-item[data-qid="${CSS.escape(String(a.question_id))}"]`);
+          if (item) { item.classList.add("open"); setTimeout(() => item.scrollIntoView({ behavior: "smooth", block: "center" }), 60); }
+        });
+      }
+    }
     rerenderPreservingDraft();
   }, 400));
 
@@ -451,8 +499,14 @@ const TABS = [
 function route() {
   const h = location.hash.replace(/^#\/?/, "");
   const [page, arg] = h.split("/");
-  if (!S.me) { renderLogin(); return; }
+  if (!S.me) { S.view = { page: "login", arg: null }; renderLogin(); return; }
   const p = PAGES.includes(page) ? page : "home";
+  const prev = S.view.page;
+  // 进入回复页：拍下已读快照（页面会话内"新"标记都以它为准，
+  // 浏览期间对方再答的也会实时标"新"并自动展开）
+  if (prev !== "replies" && p === "replies") S.repliesSeenSnapshot = repliesSeenAt();
+  // 离开回复页：此刻起视为已读（红点/首页横幅随之消失）
+  if (prev === "replies" && p !== "replies") markRepliesSeen();
   S.view = { page: p, arg: arg || null };
   const map = {
     home: renderHome, questions: renderQuestions,
@@ -485,9 +539,11 @@ function currentAnswerQid() {
 
 function tabbarHTML() {
   const qLeft = myQueue().length;
+  // 回复 tab 的未读点：正在回复页时不显示（到访即已读）
+  const freshCount = S.view.page === "replies" ? 0 : partnerNewAnswers().length;
   return `<nav class="tabbar"><div class="tabbar-inner">${TABS.map((t) => `
     <button class="tab ${S.view.page === t.key ? "active" : ""}" data-action="nav" data-page="${t.key}">
-      <span class="dot ${t.key === "answer" && qLeft > 0 ? "show" : ""}"></span>
+      <span class="dot ${(t.key === "answer" && qLeft > 0) || (t.key === "replies" && freshCount > 0) ? "show" : ""}"></span>
       <span>${t.label}</span>
     </button>`).join("")}
   </div></nav>`;
@@ -588,6 +644,15 @@ function renderHome() {
   const total = S.questions.length;
   const queue = myQueue();
   const bothDone = S.questions.filter((q) => { const { mine, theirs } = answersOf(q.id); return mine && theirs; });
+  const fresh = partnerNewAnswers();
+  const freshRow = fresh.length ? `
+      <div class="quick-row fresh" data-action="reply-jump" data-qid="${esc(fresh[0].question_id)}">
+        <div class="main">
+          <div class="t">${esc((S.partner && S.partner.name) || "对方")}有 ${fresh.length} 条新回复<span class="count"> · ${esc(relTime(fresh[0].answered_at))}</span></div>
+          <div class="d">点击直达，看TA刚写下的回答</div>
+        </div>
+        <span class="chev">›</span>
+      </div>` : "";
 
   shell(`
     ${pageHeader(window.APP_CONFIG.appName)}
@@ -603,6 +668,7 @@ function renderHome() {
     </div>
 
     <div class="list-card">
+      ${freshRow}
       <div class="quick-row ${queue.length ? "emph" : ""}" data-action="nav" data-page="answer">
         <div class="main">
           <div class="t">继续答题<span class="count"> ${queue.length ? `· ${queue.length} 题待回答` : "· 已全部完成"}</span></div>
@@ -822,13 +888,19 @@ const autoCloudSave = debounce(async () => {
    ============================================================ */
 function renderReplies() {
   const f = S.filters.replies;
+  // 用进入页面时的已读快照：本次浏览中"新"标持续可见，不会一进页面就被抹掉
+  const seen = S.repliesSeenSnapshot !== undefined ? S.repliesSeenSnapshot : repliesSeenAt();
 
   const enriched = S.questions.map((q) => {
     const { mine, theirs } = answersOf(q.id);
     const latest = [mine && mine.answered_at, theirs && theirs.answered_at, q.created_at]
       .filter(Boolean).sort().pop();
-    return { q, mine, theirs, latest, both: !!(mine && theirs) };
-  }).sort((a, b) => new Date(b.latest) - new Date(a.latest));
+    const isNew = !!(theirs && new Date(theirs.answered_at).getTime() > seen);
+    return { q, mine, theirs, latest, both: !!(mine && theirs), isNew };
+  }).sort((a, b) =>
+    // 新回复永远排最前（按对方回答时间倒序），其余按最近动态排序
+    (Number(b.isNew) - Number(a.isNew)) || (new Date(b.latest) - new Date(a.latest))
+  );
 
   const list = enriched.filter((e) => {
     if (f === "全部") return true;
@@ -843,30 +915,35 @@ function renderReplies() {
     待补答: enriched.filter((e) => !e.both).length,
   };
 
-  const listHTML = list.length ? list.map(({ q, mine, theirs, both }) => {
-    const openCls = (S.view.arg && qidEq(S.view.arg, q.id)) ? "open" : "";
+  // 从其他页面进入（无路由参数）时，自动展开最新的一条新回复
+  const firstNew = S.view.arg ? null : (enriched.find((e) => e.isNew) || null);
+
+  const listHTML = list.length ? list.map(({ q, mine, theirs, isNew }) => {
+    const openCls = ((S.view.arg && qidEq(S.view.arg, q.id)) ||
+                     (firstNew && qidEq(firstNew.q.id, q.id))) ? "open" : "";
+    const pName = (S.partner && S.partner.name) || "对方";
     return `
     <div class="reply-item ${openCls}" data-qid="${esc(q.id)}">
       <div class="q-line" data-action="reply-toggle" data-qid="${esc(q.id)}">
+        ${isNew ? `<span class="new-tag">新</span>` : ""}
         <div class="q">${esc(q.content)}</div>
         <span class="arrow">›</span>
       </div>
       <div class="reply-detail">
-        <div class="reply-pair">
-          <div class="ans-mini me">
-            <div class="who"><span class="avatar">${esc(initialOf(S.me.display_name))}</span>${esc(S.me.display_name)}
-              <span class="t">${mine ? esc(fmtTime(mine.answered_at)) : ""}</span></div>
-            <div class="a">${mine ? esc(mine.content) : "尚未作答"}</div>
-          </div>
-          <div class="ans-mini ${theirs ? "ta" : "none"}">
-            <div class="who"><span class="avatar alt">${esc(initialOf((S.partner && S.partner.name) || "对方"))}</span>${esc((S.partner && S.partner.name) || "对方")}
-              <span class="t">${theirs ? esc(fmtTime(theirs.answered_at)) : ""}</span></div>
-            <div class="a">${theirs ? esc(theirs.content) : "等待对方回答"}</div>
-          </div>
+        <div class="ans-card ta ${theirs ? "" : "empty"}">
+          <div class="who"><span class="avatar alt">${esc(initialOf(pName))}</span>${esc(pName)}
+            <span class="t">${theirs ? esc(relTime(theirs.answered_at)) : ""}</span></div>
+          <div class="a">${theirs ? esc(theirs.content) : "还没有回答，等一等TA"}</div>
+        </div>
+        <div class="ans-card me ${mine ? "" : "empty"}">
+          <div class="who"><span class="avatar">${esc(initialOf(S.me.display_name))}</span>${esc(S.me.display_name)}
+            <span class="t">${mine ? esc(relTime(mine.answered_at)) : ""}</span></div>
+          <div class="a">${mine ? esc(mine.content) : "尚未作答"}</div>
         </div>
         <div class="match-line">
-          ${!mine ? `<button class="btn btn-ghost btn-sm" data-action="ans-edit" data-qid="${esc(q.id)}">去作答</button>`
-                  : (mine ? `<button class="btn btn-ghost btn-sm" data-action="ans-edit" data-qid="${esc(q.id)}">修改我的回答</button>` : "")}
+          ${mine
+            ? `<button class="btn btn-ghost btn-sm" data-action="ans-edit" data-qid="${esc(q.id)}">修改我的回答</button>`
+            : `<button class="btn btn-primary btn-sm" data-action="ans-edit" data-qid="${esc(q.id)}">去作答</button>`}
         </div>
       </div>
     </div>`;
@@ -883,7 +960,7 @@ function renderReplies() {
           ${x}（${counts[x]}）
         </button>`).join("")}
     </div>
-    <div class="stats-note" style="margin:0 0 12px;text-align:left">点击问题，展开双方的回答与时间</div>
+    <div class="stats-note" style="margin:0 0 12px;text-align:left">TA 的回答排在上方 · 点击问题展开或收起</div>
     ${listHTML}
     <div style="height:20px"></div>
   `);
