@@ -493,7 +493,7 @@ function pageHeader(title, rightHTML = "") {
       <div class="title">${esc(title)}</div>
       <div class="topbar-right">
         ${rightHTML}
-        <div class="me-chip" data-action="logout-confirm">
+        <div class="me-chip" data-action="account-sheet" title="账号">
           <span class="avatar">${esc(initialOf(S.me.display_name))}</span>${esc(S.me.display_name)}
         </div>
       </div>
@@ -882,6 +882,41 @@ function openAddQuestionSheet(prefill = "") {
     </div>`;
 }
 
+/* 账号面板：当前账号信息 + 退出登录（两步确认） */
+function openAccountSheet() {
+  const modeText = S.adapter.mode === "local"
+    ? "演示模式 · 数据仅存储于本机浏览器"
+    : "云端同步 · 数据仅双方账号可见";
+  const partner = S.partner || {};
+  $("#modal-root").innerHTML = `
+    <div class="modal-mask" data-action="modal-close">
+      <div class="sheet" data-stop="1">
+        <div class="grab"></div>
+        <h3>账号</h3>
+        <div class="account-row">
+          <span class="avatar">${esc(initialOf(S.me.display_name))}</span>
+          <div class="who">
+            <div class="name">${esc(S.me.display_name)}</div>
+            <div class="mail">${esc(S.me.email || "")}</div>
+          </div>
+        </div>
+        <div class="account-divider"></div>
+        <div class="account-row muted">
+          <span class="avatar alt">${esc(initialOf(partner.name || "对方"))}</span>
+          <div class="who">
+            <div class="name">${esc(partner.name || "对方")}</div>
+            <div class="mail">${esc(partner.email || "")}</div>
+          </div>
+        </div>
+        <div class="mode-note">${esc(modeText)}</div>
+        <div class="sheet-actions">
+          <button class="btn btn-ghost" data-action="modal-close">关闭</button>
+          <button class="btn btn-danger-outline" data-action="logout-confirm">退出登录</button>
+        </div>
+      </div>
+    </div>`;
+}
+
 function openEditQuestionSheet(q) {
   $("#modal-root").innerHTML = `
     <div class="modal-mask" data-action="modal-close">
@@ -960,8 +995,17 @@ document.addEventListener("click", (e) => {
 
     case "login-submit": doLogin(); break;
 
+    case "account-sheet": openAccountSheet(); break;
+
     case "logout-confirm":
-      if (confirm("退出登录？")) S.adapter.signOut();
+      if (el.dataset.armed === "1") {
+        closeModal();
+        toast("已退出登录");
+        S.adapter.signOut();
+      } else {
+        el.dataset.armed = "1";
+        el.textContent = "确认退出";
+      }
       break;
 
     case "q-add": openAddQuestionSheet(); break;
